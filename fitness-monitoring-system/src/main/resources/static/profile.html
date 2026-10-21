@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Profile & Goals | FitTrack</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="profile">
+<div id="content" hidden>
+  <div class="page-head">
+    <div><h1>Profile &amp; goals</h1><p>Your details drive every number in the app, from BMI to your daily calorie target.</p></div>
+  </div>
+  <div id="welcome" class="alert info hide">Welcome! Fill in your details once and your dashboard, calorie target and plans will be ready.</div>
+
+  <div class="grid g-main">
+    <div class="stack">
+      <div class="card">
+        <div class="card-head"><h2>About you</h2></div>
+        <div id="p-alert" class="alert"></div>
+        <form id="p-form" novalidate>
+          <div class="form-grid">
+            <div class="field"><label for="age">Age</label><input id="age" type="number" min="10" max="100" inputmode="numeric"></div>
+            <div class="field"><label for="gender">Gender</label><select id="gender"><option value="">Select</option><option>Male</option><option>Female</option></select></div>
+            <div class="field"><label for="height">Height (cm)</label><input id="height" type="number" min="100" max="250" step="0.1" inputmode="decimal"></div>
+            <div class="field"><label for="weight">Weight (kg)</label><input id="weight" type="number" min="25" max="300" step="0.1" inputmode="decimal"></div>
+            <div class="field"><label for="activity">Activity level</label>
+              <select id="activity"><option value="">Select</option><option>Sedentary</option><option>Lightly Active</option><option>Moderately Active</option><option>Very Active</option></select>
+              <span class="hint">Sedentary means little exercise, Very Active means hard training most days.</span></div>
+            <div class="field"><label for="goal">Fitness goal</label>
+              <select id="goal"><option value="">Select</option><option>Weight Loss</option><option>Weight Gain</option><option>Muscle Gain</option><option>Maintenance</option><option>General Fitness</option></select></div>
+            <div class="field"><label for="diet">Food preference</label>
+              <select id="diet"><option>Non-Vegetarian</option><option>Eggetarian</option><option>Vegetarian</option></select></div>
+            <div class="field"><label for="target">Target weight (kg)</label><input id="target" type="number" min="25" max="300" step="0.1" inputmode="decimal"><span class="hint">Optional. Used to track progress.</span></div>
+          </div>
+          <button class="btn" id="p-save" type="submit">Save profile</button>
+        </form>
+      </div>
+
+      <div class="card" id="goals-card">
+        <div class="card-head"><h2>Goals</h2></div>
+        <div id="g-alert" class="alert"></div>
+        <form id="g-form" novalidate>
+          <div class="form-grid">
+            <div class="field"><label for="g-workouts">Workouts per week</label><input id="g-workouts" type="number" min="1" max="14"></div>
+            <div class="field"><label for="g-water">Water per day (ml)</label><input id="g-water" type="number" min="500" max="6000" step="50"></div>
+            <div class="field"><label for="g-steps">Steps per day</label><input id="g-steps" type="number" min="1000" max="50000" step="500"></div>
+            <div class="field"><label for="g-target">Target weight (kg)</label><input id="g-target" type="number" min="25" max="300" step="0.1"></div>
+          </div>
+          <button class="btn secondary" id="g-save" type="submit">Update goals</button>
+        </form>
+        <div id="g-progress" class="mt"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Reminders</h2><span class="sub">Work while FitTrack is open in a browser tab</span></div>
+        <div id="reminders"></div>
+        <button class="btn secondary mt" id="notify-btn" type="button"></button>
+      </div>
+    </div>
+
+    <div class="stack">
+      <div class="card hide" id="results">
+        <div class="card-head"><h2>Your numbers</h2></div>
+        <div class="stat-pills" id="r-pills"></div>
+        <div class="bmi-scale mt"><div class="bmi-marker" id="bmi-marker" style="left:0"></div></div>
+        <div class="bmi-labels"><span>Underweight</span><span>Normal</span><span>Overweight</span><span>Obese</span></div>
+        <p class="muted mt" id="r-note" style="font-size:.9rem"></p>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>How we calculate</h2></div>
+        <p class="muted" style="font-size:.92rem">BMI is weight divided by height squared. BMR uses the Mifflin-St Jeor equation. Your daily need (TDEE) is BMR times an activity factor, then adjusted for your goal: 500 kcal less to lose weight, 400 more to gain, 250 more for muscle gain. You never type a calorie number yourself.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Your data</h2></div>
+        <div class="chips">
+          <button class="chip" data-export="workouts" type="button">Workouts CSV</button>
+          <button class="chip" data-export="meals" type="button">Meals CSV</button>
+          <button class="chip" data-export="weight" type="button">Weight CSV</button>
+        </div>
+        <p class="muted mt" style="font-size:.88rem" id="account"></p>
+        <button class="btn danger small mt" id="logout" type="button">Log out</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="js/icons.js"></script>
+<script src="js/api.js"></script>
+<script src="js/layout.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const REMINDER_LABELS = { water: "Drink water", workout: "Workout", meal: "Log meals" };
+let currentProfile = null;
+
+function renderResults(p) {
+  $("results").classList.remove("hide");
+  $("r-pills").innerHTML =
+    '<div class="pill-stat"><b>' + num(p.bmi, 1) + "</b><span>BMI · " + esc(p.bmiCategory) + "</span></div>" +
+    '<div class="pill-stat"><b>' + num(p.bmr) + "</b><span>BMR kcal</span></div>" +
+    '<div class="pill-stat"><b>' + num(p.tdee) + "</b><span>TDEE kcal</span></div>" +
+    '<div class="pill-stat"><b>' + num(p.calorieTarget) + "</b><span>Daily target kcal</span></div>";
+  const pos = Math.max(0, Math.min(100, ((p.bmi - 10) / 30) * 100));
+  $("bmi-marker").style.left = pos + "%";
+  $("r-note").textContent = "Your target of " + num(p.calorieTarget) + " kcal a day is set for " + p.fitnessGoal.toLowerCase() + ".";
+}
+
+function fillForms(p) {
+  $("age").value = p.age;
+  $("gender").value = p.gender;
+  $("height").value = p.heightCm;
+  $("weight").value = p.weightKg;
+  $("activity").value = p.activityLevel;
+  $("goal").value = p.fitnessGoal;
+  $("diet").value = p.dietaryPreference || "Non-Vegetarian";
+  $("target").value = p.targetWeightKg || "";
+  $("g-workouts").value = p.weeklyWorkoutGoal;
+  $("g-water").value = p.dailyWaterGoalMl;
+  $("g-steps").value = p.dailyStepGoal;
+  $("g-target").value = p.targetWeightKg || "";
+}
+
+async function renderGoalProgress() {
+  try {
+    const s = await apiGet("/dashboard");
+    $("g-progress").innerHTML =
+      meter("Workouts this week", s.weeklyWorkoutCount, s.weeklyWorkoutGoal, "", "green") +
+      meter("Water today", s.waterTodayMl, s.waterGoalMl, "ml", "teal") +
+      meter("Steps today", s.stepsToday, s.stepGoal, "", "") +
+      (s.weightProgressPct !== null ? meter("Weight goal", s.weightProgressPct, 100, "%", "orange") : "");
+  } catch (e) {
+    $("g-progress").innerHTML = "";
+  }
+}
+
+function meter(label, value, goal, unit, tone) {
+  const pct = goal > 0 ? Math.min(100, (value / goal) * 100) : 0;
+  return '<div class="meter-row"><div class="meter-top"><span>' + label + "</span><span>" + num(value) + " / " + num(goal) + (unit ? " " + unit : "") +
+    '</span></div><div class="progress ' + tone + '"><i style="width:' + pct + '%"></i></div></div>';
+}
+
+function renderReminders() {
+  const r = getReminders();
+  $("reminders").innerHTML = Object.keys(r).map((k) =>
+    '<div class="reminder-row"><div class="grow"><b>' + REMINDER_LABELS[k] + '</b></div><input type="time" data-time="' + k + '" value="' + r[k].time + '">' +
+    '<label class="switch"><input type="checkbox" data-on="' + k + '" ' + (r[k].on ? "checked" : "") + '><span></span></label></div>').join("");
+  const supported = "Notification" in window;
+  const perm = supported ? Notification.permission : "denied";
+  $("notify-btn").innerHTML = icon("bell") + (perm === "granted" ? " Browser notifications are on" : " Allow browser notifications");
+  $("notify-btn").disabled = !supported || perm === "granted";
+}
+
+async function loadProfile() {
+  try {
+    const [profile, me] = await Promise.all([apiGet("/profile"), apiGet("/auth/me")]);
+    $("account").textContent = "Signed in as " + me.fullName + " (" + me.email + ")";
+    if (profile) {
+      currentProfile = profile;
+      fillForms(profile);
+      renderResults(profile);
+      renderGoalProgress();
+    } else {
+      $("goals-card").classList.add("hide");
+    }
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  if (!getToken()) return;
+  if (new URLSearchParams(location.search).get("welcome")) $("welcome").classList.remove("hide");
+  $("results").classList.add("hide");
+  renderReminders();
+  loadProfile();
+
+  $("p-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("p-save");
+    const body = {
+      age: parseInt($("age").value, 10),
+      gender: $("gender").value,
+      heightCm: parseFloat($("height").value),
+      weightKg: parseFloat($("weight").value),
+      activityLevel: $("activity").value,
+      fitnessGoal: $("goal").value,
+      dietaryPreference: $("diet").value,
+      targetWeightKg: $("target").value ? parseFloat($("target").value) : null
+    };
+    if (!(body.age > 0) || !body.gender || !(body.heightCm > 0) || !(body.weightKg > 0) || !body.activityLevel || !body.fitnessGoal) {
+      showAlert("p-alert", "Please fill in age, gender, height, weight, activity level and goal", "error");
+      return;
+    }
+    setBusy(btn, true, "Saving...");
+    try {
+      const saved = await apiPost("/profile", body);
+      showAlert("p-alert", "");
+      toast("Profile saved", "success");
+      $("welcome").classList.add("hide");
+      $("goals-card").classList.remove("hide");
+      currentProfile = saved;
+      fillForms(saved);
+      renderResults(saved);
+      renderGoalProgress();
+    } catch (err) {
+      showAlert("p-alert", err.message, "error");
+    }
+    setBusy(btn, false);
+  });
+
+  $("g-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("g-save");
+    setBusy(btn, true, "Saving...");
+    try {
+      const saved = await apiPut("/profile/goals", {
+        weeklyWorkoutGoal: parseInt($("g-workouts").value, 10),
+        dailyWaterGoalMl: parseInt($("g-water").value, 10),
+        dailyStepGoal: parseInt($("g-steps").value, 10),
+        targetWeightKg: $("g-target").value ? parseFloat($("g-target").value) : null
+      });
+      showAlert("g-alert", "");
+      toast("Goals updated", "success");
+      currentProfile = saved;
+      fillForms(saved);
+      renderGoalProgress();
+    } catch (err) {
+      showAlert("g-alert", err.message, "error");
+    }
+    setBusy(btn, false);
+  });
+
+  $("reminders").addEventListener("change", (e) => {
+    const r = getReminders();
+    if (e.target.dataset.on) {
+      r[e.target.dataset.on].on = e.target.checked;
+      r[e.target.dataset.on].lastFired = null;
+      if (e.target.checked && "Notification" in window && Notification.permission === "default") {
+        Notification.requestPermission().then(renderReminders);
+      }
+    }
+    if (e.target.dataset.time) {
+      r[e.target.dataset.time].time = e.target.value;
+      r[e.target.dataset.time].lastFired = null;
+    }
+    saveReminders(r);
+    toast("Reminder saved", "success");
+  });
+
+  $("notify-btn").addEventListener("click", () => {
+    Notification.requestPermission().then(renderReminders);
+  });
+
+  document.querySelectorAll("[data-export]").forEach((b) => b.addEventListener("click", async () => {
+    try { await downloadCsv(b.dataset.export, b.dataset.export + ".csv"); } catch (err) { toast(err.message, "error"); }
+  }));
+  $("logout").addEventListener("click", logout);
+});
+</script>
+</body>
+</html>
