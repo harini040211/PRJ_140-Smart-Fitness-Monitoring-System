@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Progress | FitTrack</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="progress">
+<div id="content" hidden>
+  <div class="page-head">
+    <div><h1>Progress</h1><p>See how your training, food and weight are trending.</p></div>
+    <div class="head-actions">
+      <select id="range" style="border:1.5px solid var(--line);border-radius:12px;padding:10px 14px;background:#fff">
+        <option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option>
+      </select>
+    </div>
+  </div>
+  <div id="state"></div>
+  <div id="view" class="hide">
+    <div class="grid g4" id="kpis"></div>
+    <div class="grid g2 mt">
+      <div class="card"><div class="card-head"><h2>Calories burned</h2><span class="sub">Per day</span></div><div class="chart-box"><canvas id="burnChart"></canvas></div></div>
+      <div class="card"><div class="card-head"><h2>Workout duration</h2><span class="sub">Minutes per day</span></div><div class="chart-box"><canvas id="minChart"></canvas></div></div>
+      <div class="card"><div class="card-head"><h2>Calories eaten</h2><span class="sub" id="eaten-note"></span></div><div class="chart-box"><canvas id="eatChart"></canvas></div></div>
+      <div class="card"><div class="card-head"><h2>Weekly frequency</h2><span class="sub">Workouts per week</span></div><div class="chart-box"><canvas id="freqChart"></canvas></div></div>
+      <div class="card"><div class="card-head"><h2>Calories by exercise</h2></div><div class="chart-box"><canvas id="exChart"></canvas></div></div>
+      <div class="card"><div class="card-head"><h2>Intensity mix</h2></div><div class="chart-box"><canvas id="intChart"></canvas></div></div>
+      <div class="card"><div class="card-head"><h2>Steps</h2><span class="sub" id="steps-note"></span></div><div class="chart-box"><canvas id="stepChart"></canvas></div></div>
+      <div class="card"><div class="card-head"><h2>Water</h2><span class="sub" id="water-note"></span></div><div class="chart-box"><canvas id="waterChart"></canvas></div></div>
+    </div>
+    <div class="grid g-main mt">
+      <div class="card">
+        <div class="card-head"><h2>Weight history</h2><span class="sub" id="weight-note"></span></div>
+        <div class="chart-box tall"><canvas id="weightChart"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Record your weight</h2></div>
+        <div id="w-alert" class="alert"></div>
+        <div class="field"><label for="w-input">Weight today (kg)</label><input id="w-input" type="number" step="0.1" min="25" max="300" inputmode="decimal"></div>
+        <button class="btn block" id="w-save" type="button">Save weight</button>
+        <p class="hint muted mt" style="font-size:.85rem">Saving a new weight also updates your BMI, BMR and daily calorie target.</p>
+        <div id="w-bmi" class="mt"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="js/vendor/chart.umd.js"></script>
+<script src="js/icons.js"></script>
+<script src="js/api.js"></script>
+<script src="js/layout.js"></script>
+<script src="js/charts.js"></script>
+<script>
+const ctx = { profile: null };
+
+function weekKey(iso) {
+  const d = parseDay(iso);
+  const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7));
+  return isoDate(monday);
+}
+
+function lineOpts(extra) {
+  return { scales: axisOptions(extra), plugins: { legend: { display: false } } };
+}
+
+function renderAnalytics(a, summary) {
+  const days = a.days;
+  const labels = days.map((d) => (days.length > 31 ? shortDate(d.date) : days.length > 10 ? shortDate(d.date) : shortDay(d.date)));
+  const sum = (k) => days.reduce((s, d) => s + d[k], 0);
+  const active = days.filter((d) => d.workouts > 0).length;
+  const eatenDays = days.filter((d) => d.caloriesEaten > 0);
+  const kpis = [
+    ["flame", "tone-orange", "Calories burned", num(sum("caloriesBurned")), "kcal"],
+    ["dumbbell", "tone-blue", "Workouts", num(sum("workouts")), active + " active days"],
+    ["clock", "tone-green", "Training time", num(sum("workoutMinutes")), "minutes"],
+    ["utensils", "tone-violet", "Avg. intake", eatenDays.length ? num(sum("caloriesEaten") / eatenDays.length) : "0", "kcal on logged days"]
+  ];
+  document.getElementById("kpis").innerHTML = kpis.map((k) =>
+    '<div class="card stat"><div class="stat-icon ' + k[1] + '">' + icon(k[0]) + '</div><div><div class="label">' + k[2] + '</div><div class="value">' + k[3] + '</div><div class="note">' + k[4] + "</div></div></div>").join("");
+
+  drawChart("burnChart", { type: "bar", data: { labels, datasets: [{ data: days.map((d) => d.caloriesBurned), backgroundColor: PALETTE.blue, borderRadius: 5 }] }, options: lineOpts() });
+  drawChart("minChart", { type: "line", data: { labels, datasets: [{ data: days.map((d) => d.workoutMinutes), borderColor: PALETTE.green, backgroundColor: "rgba(15,157,107,.12)", fill: true, tension: .3, pointRadius: days.length > 31 ? 0 : 3 }] }, options: lineOpts() });
+
+  document.getElementById("eaten-note").textContent = "Target " + num(ctx.profile.calorieTarget) + " kcal";
+  drawChart("eatChart", {
+    type: "line",
+    data: { labels, datasets: [
+      { label: "Eaten", data: days.map((d) => d.caloriesEaten), borderColor: PALETTE.orange, backgroundColor: "rgba(232,131,12,.12)", fill: true, tension: .3, pointRadius: days.length > 31 ? 0 : 3 },
+      { label: "Target", data: days.map(() => ctx.profile.calorieTarget), borderColor: PALETTE.green, borderDash: [6, 6], pointRadius: 0 }
+    ] },
+    options: { scales: axisOptions(), plugins: { legend: { position: "bottom", labels: { usePointStyle: true } } } }
+  });
+
+  const weeks = {};
+  days.forEach((d) => { const k = weekKey(d.date); weeks[k] = (weeks[k] || 0) + d.workouts; });
+  const wk = Object.keys(weeks).sort();
+  drawChart("freqChart", {
+    type: "bar",
+    data: { labels: wk.map((k) => "Wk of " + shortDate(k)), datasets: [
+      { label: "Workouts", data: wk.map((k) => weeks[k]), backgroundColor: PALETTE.violet, borderRadius: 6 },
+      { label: "Goal", type: "line", data: wk.map(() => ctx.profile.weeklyWorkoutGoal), borderColor: PALETTE.green, borderDash: [6, 6], pointRadius: 0 }
+    ] },
+    options: { scales: axisOptions({ ticks: { precision: 0 } }), plugins: { legend: { position: "bottom", labels: { usePointStyle: true } } } }
+  });
+
+  const ex = a.byExercise.slice(0, 8);
+  document.getElementById("exChart").parentElement.innerHTML = ex.length
+    ? '<canvas id="exChart"></canvas>' : emptyState("dumbbell", "No workouts in this period", "Log a workout to see the breakdown.");
+  if (ex.length) {
+    drawChart("exChart", { type: "bar", data: { labels: ex.map((e) => e.exercise), datasets: [{ data: ex.map((e) => e.calories), backgroundColor: PALETTE.teal, borderRadius: 5 }] },
+      options: { indexAxis: "y", scales: { x: { beginAtZero: true, grid: { color: PALETTE.grid } }, y: { grid: { display: false } } }, plugins: { legend: { display: false } } } });
+  }
+
+  const mix = a.byIntensity;
+  const mixTotal = mix.Low + mix.Medium + mix.High;
+  document.getElementById("intChart").parentElement.innerHTML = mixTotal
+    ? '<canvas id="intChart"></canvas>' : emptyState("zap", "No workouts in this period", "Intensity mix appears once you log sessions.");
+  if (mixTotal) {
+    drawChart("intChart", { type: "doughnut", data: { labels: ["Low", "Medium", "High"], datasets: [{ data: [mix.Low, mix.Medium, mix.High], backgroundColor: [PALETTE.green, PALETTE.orange, PALETTE.red], borderWidth: 0 }] },
+      options: { cutout: "62%", plugins: { legend: { position: "right", labels: { usePointStyle: true } } } } });
+  }
+
+  document.getElementById("steps-note").textContent = "Goal " + num(ctx.profile.dailyStepGoal);
+  drawChart("stepChart", {
+    type: "bar",
+    data: { labels, datasets: [
+      { label: "Steps", data: days.map((d) => d.steps), backgroundColor: PALETTE.blue, borderRadius: 5 },
+      { label: "Goal", type: "line", data: days.map(() => ctx.profile.dailyStepGoal), borderColor: PALETTE.green, borderDash: [6, 6], pointRadius: 0 }
+    ] },
+    options: { scales: axisOptions(), plugins: { legend: { display: false } } }
+  });
+
+  document.getElementById("water-note").textContent = "Goal " + num(ctx.profile.dailyWaterGoalMl) + " ml";
+  drawChart("waterChart", {
+    type: "bar",
+    data: { labels, datasets: [
+      { label: "Water (ml)", data: days.map((d) => d.waterMl), backgroundColor: PALETTE.teal, borderRadius: 5 },
+      { label: "Goal", type: "line", data: days.map(() => ctx.profile.dailyWaterGoalMl), borderColor: PALETTE.green, borderDash: [6, 6], pointRadius: 0 }
+    ] },
+    options: { scales: axisOptions(), plugins: { legend: { display: false } } }
+  });
+}
+
+function renderWeight(history) {
+  document.getElementById("weight-note").textContent = ctx.profile.targetWeightKg
+    ? "Target " + num(ctx.profile.targetWeightKg, 1) + " kg" : "Set a target in Profile & Goals";
+  const datasets = [{ label: "Weight (kg)", data: history.map((h) => h.weightKg), borderColor: PALETTE.violet, backgroundColor: "rgba(124,77,255,.12)", fill: true, tension: .3, pointRadius: 4, pointBackgroundColor: PALETTE.violet }];
+  if (ctx.profile.targetWeightKg) datasets.push({ label: "Target", data: history.map(() => ctx.profile.targetWeightKg), borderColor: PALETTE.green, borderDash: [6, 6], pointRadius: 0 });
+  drawChart("weightChart", { type: "line", data: { labels: history.map((h) => shortDate(h.date)), datasets }, options: { scales: axisOptions({ beginAtZero: false }), plugins: { legend: { display: false } } } });
+  document.getElementById("w-input").value = ctx.profile.weightKg;
+  document.getElementById("w-bmi").innerHTML = '<div class="stat-pills"><div class="pill-stat"><b>' + num(ctx.profile.bmi, 1) + "</b><span>BMI</span></div><div class=\"pill-stat\"><b>" + esc(ctx.profile.bmiCategory) + "</b><span>Category</span></div></div>";
+}
+
+async function load() {
+  document.getElementById("state").innerHTML = '<div class="grid g4"><div class="skeleton skel-card"></div><div class="skeleton skel-card"></div><div class="skeleton skel-card"></div><div class="skeleton skel-card"></div></div><div class="skeleton skel-tall mt"></div>';
+  try {
+    const profile = await apiGet("/profile");
+    if (!profile) { window.location.href = "profile.html?welcome=1"; return; }
+    ctx.profile = profile;
+    const [analytics, weights] = await Promise.all([apiGet("/analytics?days=" + document.getElementById("range").value), apiGet("/weight")]);
+    document.getElementById("state").innerHTML = "";
+    document.getElementById("view").classList.remove("hide");
+    renderAnalytics(analytics);
+    renderWeight(weights);
+  } catch (err) {
+    document.getElementById("state").innerHTML = '<div class="card">' + emptyState("alert", "Could not load your progress", err.message) + '<div style="text-align:center"><button class="btn" onclick="load()">Try again</button></div></div>';
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  if (!getToken()) return;
+  document.getElementById("range").addEventListener("change", load);
+  document.getElementById("w-save").addEventListener("click", async () => {
+    const btn = document.getElementById("w-save");
+    const kg = parseFloat(document.getElementById("w-input").value);
+    setBusy(btn, true, "Saving...");
+    try {
+      await apiPost("/weight", { weightKg: kg });
+      showAlert("w-alert", "");
+      toast("Weight recorded", "success");
+      await load();
+    } catch (err) {
+      showAlert("w-alert", err.message, "error");
+    }
+    setBusy(btn, false);
+  });
+  load();
+});
+</script>
+</body>
+</html>

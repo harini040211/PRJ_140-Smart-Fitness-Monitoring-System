@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workouts | FitTrack</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="workouts">
+<div id="content" hidden>
+  <div class="page-head">
+    <div><h1>Workouts</h1><p>Pick an exercise, run the timer, and the calories are worked out for you.</p></div>
+    <div class="head-actions"><button class="btn secondary" id="manual-open" type="button">Log a past workout</button></div>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button type="button" data-tab="library" class="on">Exercise library</button>
+    <button type="button" data-tab="favorites">Favorites</button>
+    <button type="button" data-tab="history">History</button>
+  </div>
+
+  <section id="tab-library">
+    <div class="toolbar">
+      <div class="search"><span id="search-icon"></span><input id="q" type="search" placeholder="Search exercises" class="field-input" style="border:1.5px solid var(--line);border-radius:12px;padding:11px 14px 11px 42px;width:100%;background:#fbfdff"></div>
+      <select id="difficulty"><option value="">Any difficulty</option><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select>
+    </div>
+    <div class="chips" id="muscles" style="margin-bottom:18px"></div>
+    <div class="item-grid" id="grid"></div>
+  </section>
+
+  <section id="tab-favorites" class="hide"><div class="item-grid" id="fav-grid"></div></section>
+
+  <section id="tab-history" class="hide">
+    <div class="card">
+      <div class="toolbar">
+        <select id="h-range">
+          <option value="all">All time</option><option value="today">Today</option><option value="week">This week</option>
+          <option value="month">This month</option><option value="custom">Custom range</option>
+        </select>
+        <input type="date" id="h-from" class="hide" style="border:1.5px solid var(--line);border-radius:12px;padding:10px">
+        <input type="date" id="h-to" class="hide" style="border:1.5px solid var(--line);border-radius:12px;padding:10px">
+        <select id="h-exercise"><option value="">All exercises</option></select>
+        <select id="h-sort">
+          <option value="new">Newest first</option><option value="old">Oldest first</option>
+          <option value="cal">Most calories</option><option value="dur">Longest duration</option>
+        </select>
+        <button class="btn ghost small" id="h-export" type="button"></button>
+      </div>
+      <div class="stat-pills" id="h-totals" style="margin-bottom:10px"></div>
+      <div id="h-list" class="list"></div>
+    </div>
+  </section>
+</div>
+
+<div class="modal-back" id="start-modal">
+  <div class="modal">
+    <h2 id="sm-title"></h2>
+    <p class="sub" id="sm-sub"></p>
+    <div class="field"><label for="sm-target">Target duration (minutes)</label><input id="sm-target" type="number" min="1" max="600"></div>
+    <div class="field"><label for="sm-intensity">Intensity</label>
+      <select id="sm-intensity"><option>Low</option><option selected>Medium</option><option>High</option></select>
+      <span class="hint" id="sm-estimate"></span>
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" type="button" id="sm-cancel">Cancel</button>
+      <button class="btn green" type="button" id="sm-start"></button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-back" id="manual-modal">
+  <div class="modal">
+    <h2>Log a workout</h2>
+    <p class="sub">For sessions you did without the timer.</p>
+    <div id="manual-alert" class="alert"></div>
+    <div class="field"><label for="mm-exercise">Exercise</label><select id="mm-exercise"></select></div>
+    <div class="form-grid">
+      <div class="field"><label for="mm-duration">Duration (min)</label><input id="mm-duration" type="number" min="1" max="600" value="30"></div>
+      <div class="field"><label for="mm-intensity">Intensity</label><select id="mm-intensity"><option>Low</option><option selected>Medium</option><option>High</option></select></div>
+    </div>
+    <div class="field"><label for="mm-date">Date</label><input id="mm-date" type="date"></div>
+    <span class="hint" id="mm-estimate" style="display:block;margin-bottom:12px"></span>
+    <div class="modal-actions">
+      <button class="btn ghost" type="button" id="mm-cancel">Cancel</button>
+      <button class="btn" type="button" id="mm-save">Save workout</button>
+    </div>
+  </div>
+</div>
+
+<div class="timer-screen" id="timer">
+  <div class="art" id="t-art"></div>
+  <h2 id="t-name"></h2>
+  <div class="sub" id="t-sub"></div>
+  <div class="timer-clock" id="t-clock">00:00</div>
+  <div class="timer-kcal" id="t-kcal"></div>
+  <div class="timer-bar"><i id="t-bar"></i></div>
+  <div class="timer-controls">
+    <button class="btn light" id="t-pause" type="button"></button>
+    <button class="btn light" id="t-rest" type="button">Rest 30s</button>
+    <button class="btn green" id="t-finish" type="button"></button>
+    <button class="btn light" id="t-cancel" type="button">Discard</button>
+  </div>
+</div>
+
+<script src="js/icons.js"></script>
+<script src="js/api.js"></script>
+<script src="js/layout.js"></script>
+<script>
+const state = { exercises: [], favorites: new Set(), history: [], muscle: "All", weight: 70, picked: null };
+const timer = { running: false, startedAt: 0, elapsed: 0, restUntil: 0, handle: null, intensity: "Medium", target: 30, exercise: null };
+const FACTOR = { Low: 0.85, Medium: 1, High: 1.2 };
+
+function estimate(met, minutes, intensity) {
+  return Math.round(met * state.weight * (minutes / 60) * (FACTOR[intensity] || 1) * 10) / 10;
+}
+
+function difficultyTone(d) {
+  return d === "Advanced" ? "red" : d === "Intermediate" ? "orange" : "green";
+}
+
+function exerciseCard(e) {
+  const fav = state.favorites.has(e.id);
+  return '<div class="item"><div class="item-top"><div class="item-art">' + e.icon + '</div>' +
+    '<button type="button" class="icon-btn fav ' + (fav ? "on" : "") + '" data-fav="' + e.id + '" aria-label="Favorite">' + icon("star", fav ? "filled" : "") + "</button></div>" +
+    "<h3>" + esc(e.name) + '</h3><div class="meta"><span class="badge ' + difficultyTone(e.difficulty) + '">' + e.difficulty + '</span><span class="badge blue">' + esc(e.muscle) + "</span></div>" +
+    '<div class="facts">' + esc(e.equipment) + " · about " + estimate(e.met, e.recommendedMin, "Medium") + " kcal in " + e.recommendedMin + ' min</div>' +
+    '<button type="button" class="btn" data-start="' + e.id + '">' + icon("play") + " Start</button></div>";
+}
+
+function renderLibrary() {
+  const q = document.getElementById("q").value.trim().toLowerCase();
+  const diff = document.getElementById("difficulty").value;
+  const list = state.exercises.filter((e) =>
+    (state.muscle === "All" || e.muscle === state.muscle) &&
+    (!diff || e.difficulty === diff) &&
+    (!q || e.name.toLowerCase().includes(q) || e.muscle.toLowerCase().includes(q)));
+  document.getElementById("grid").innerHTML = list.length ? list.map(exerciseCard).join("") : emptyState("search", "No exercises match", "Try a different search or filter.");
+  const favs = state.exercises.filter((e) => state.favorites.has(e.id));
+  document.getElementById("fav-grid").innerHTML = favs.length ? favs.map(exerciseCard).join("") : emptyState("star", "No favorites yet", "Tap the star on an exercise to keep it here.");
+}
+
+function renderMuscles() {
+  const muscles = ["All"].concat([...new Set(state.exercises.map((e) => e.muscle))].sort());
+  document.getElementById("muscles").innerHTML = muscles.map((m) =>
+    '<button type="button" class="chip ' + (m === state.muscle ? "on" : "") + '" data-muscle="' + m + '">' + m + "</button>").join("");
+}
+
+function inRange(w) {
+  const range = document.getElementById("h-range").value;
+  const today = isoDate();
+  if (range === "today") return w.date === today;
+  if (range === "week") {
+    const now = new Date();
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
+    return w.date >= isoDate(monday);
+  }
+  if (range === "month") return w.date.slice(0, 7) === today.slice(0, 7);
+  if (range === "custom") {
+    const from = document.getElementById("h-from").value;
+    const to = document.getElementById("h-to").value;
+    return (!from || w.date >= from) && (!to || w.date <= to);
+  }
+  return true;
+}
+
+function renderHistory() {
+  const exFilter = document.getElementById("h-exercise").value;
+  let rows = state.history.filter((w) => inRange(w) && (!exFilter || w.exerciseType === exFilter));
+  const sort = document.getElementById("h-sort").value;
+  rows = rows.slice().sort((a, b) =>
+    sort === "old" ? a.date.localeCompare(b.date) || a.id - b.id :
+    sort === "cal" ? b.caloriesBurned - a.caloriesBurned :
+    sort === "dur" ? b.durationMinutes - a.durationMinutes :
+    b.date.localeCompare(a.date) || b.id - a.id);
+
+  const minutes = rows.reduce((s, w) => s + w.durationMinutes, 0);
+  const kcal = rows.reduce((s, w) => s + w.caloriesBurned, 0);
+  document.getElementById("h-totals").innerHTML =
+    '<div class="pill-stat"><b>' + rows.length + "</b><span>Workouts</span></div>" +
+    '<div class="pill-stat"><b>' + num(minutes) + "</b><span>Minutes</span></div>" +
+    '<div class="pill-stat"><b>' + num(kcal) + "</b><span>kcal burned</span></div>";
+
+  const art = (name) => (state.exercises.find((e) => e.name === name) || {}).icon || "🏃";
+  document.getElementById("h-list").innerHTML = rows.length
+    ? rows.map((w) =>
+        '<div class="row"><div class="art">' + art(w.exerciseType) + '</div><div class="grow"><b>' + esc(w.exerciseType) + "</b><span>" + prettyDate(w.date) +
+        " · " + w.durationMinutes + " min</span></div>" + intensityBadge(w.intensity) +
+        '<div class="end">' + num(w.caloriesBurned, 1) + "<small>kcal</small></div>" +
+        '<button type="button" class="icon-btn" data-del="' + w.id + '" aria-label="Delete">' + icon("trash") + "</button></div>").join("")
+    : emptyState("dumbbell", "No workouts found", "Nothing matches these filters yet.");
+}
+
+function fillExerciseFilters() {
+  const names = [...new Set(state.history.map((w) => w.exerciseType))].sort();
+  const sel = document.getElementById("h-exercise");
+  const current = sel.value;
+  sel.innerHTML = '<option value="">All exercises</option>' + names.map((n) => "<option>" + esc(n) + "</option>").join("");
+  sel.value = names.includes(current) ? current : "";
+}
+
+async function reloadHistory() {
+  state.history = await apiGet("/workouts");
+  fillExerciseFilters();
+  renderHistory();
+}
+
+function openStart(id) {
+  state.picked = state.exercises.find((e) => e.id === id);
+  const e = state.picked;
+  document.getElementById("sm-title").textContent = e.name;
+  document.getElementById("sm-sub").textContent = e.muscle + " · " + e.difficulty + " · " + e.equipment;
+  document.getElementById("sm-target").value = e.recommendedMin;
+  document.getElementById("sm-intensity").value = "Medium";
+  updateStartEstimate();
+  openModal("start-modal");
+}
+
+function updateStartEstimate() {
+  const e = state.picked;
+  const minutes = parseInt(document.getElementById("sm-target").value || "0", 10);
+  const intensity = document.getElementById("sm-intensity").value;
+  document.getElementById("sm-estimate").textContent = minutes > 0
+    ? "Estimated burn for the full session: " + estimate(e.met, minutes, intensity) + " kcal"
+    : "";
+}
+
+function clockText(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+}
+
+function currentElapsed() {
+  return timer.elapsed + (timer.running ? (Date.now() - timer.startedAt) / 1000 : 0);
+}
+
+function tick() {
+  const e = timer.exercise;
+  if (timer.restUntil) {
+    const left = Math.ceil((timer.restUntil - Date.now()) / 1000);
+    if (left <= 0) {
+      timer.restUntil = 0;
+      timer.startedAt = Date.now();
+      timer.running = true;
+      document.getElementById("t-sub").textContent = "Back to work";
+      syncPauseButton();
+    } else {
+      document.getElementById("t-clock").textContent = clockText(left);
+      document.getElementById("t-sub").textContent = "Resting, workout timer is paused";
+      return;
+    }
+  }
+  const secs = currentElapsed();
+  document.getElementById("t-clock").textContent = clockText(secs);
+  document.getElementById("t-kcal").textContent = "About " + estimate(e.met, secs / 60, timer.intensity) + " kcal so far";
+  document.getElementById("t-bar").style.width = Math.min(100, (secs / (timer.target * 60)) * 100) + "%";
+}
+
+function syncPauseButton() {
+  document.getElementById("t-pause").innerHTML = timer.running ? icon("pause") + " Pause" : icon("play") + " Resume";
+}
+
+function beginSession() {
+  const e = state.picked;
+  const target = parseInt(document.getElementById("sm-target").value || "0", 10);
+  if (!(target > 0)) {
+    toast("Enter a target duration", "error");
+    return;
+  }
+  Object.assign(timer, { running: true, startedAt: Date.now(), elapsed: 0, restUntil: 0, intensity: document.getElementById("sm-intensity").value, target, exercise: e });
+  document.getElementById("t-art").textContent = e.icon;
+  document.getElementById("t-name").textContent = e.name;
+  document.getElementById("t-sub").textContent = timer.intensity + " intensity · target " + target + " min";
+  document.getElementById("t-bar").style.width = "0";
+  syncPauseButton();
+  closeModal("start-modal");
+  document.getElementById("timer").classList.add("open");
+  clearInterval(timer.handle);
+  timer.handle = setInterval(tick, 250);
+  tick();
+}
+
+function endSession() {
+  clearInterval(timer.handle);
+  timer.running = false;
+  timer.restUntil = 0;
+  document.getElementById("timer").classList.remove("open");
+}
+
+async function finishSession() {
+  const minutes = Math.max(1, Math.round(currentElapsed() / 60));
+  const e = timer.exercise;
+  const btn = document.getElementById("t-finish");
+  setBusy(btn, true, "Saving...");
+  try {
+    const saved = await apiPost("/workouts", { exerciseId: e.id, intensity: timer.intensity, durationMinutes: minutes });
+    endSession();
+    toast("Saved " + e.name + ": " + num(saved.caloriesBurned, 1) + " kcal burned", "success");
+    await reloadHistory();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+  setBusy(btn, false);
+  document.getElementById("t-finish").innerHTML = icon("check") + " Finish & save";
+}
+
+function updateManualEstimate() {
+  const e = state.exercises.find((x) => x.id === document.getElementById("mm-exercise").value);
+  const minutes = parseInt(document.getElementById("mm-duration").value || "0", 10);
+  document.getElementById("mm-estimate").textContent = e && minutes > 0
+    ? "Estimated burn: " + estimate(e.met, minutes, document.getElementById("mm-intensity").value) + " kcal" : "";
+}
+
+async function saveManual() {
+  const btn = document.getElementById("mm-save");
+  setBusy(btn, true, "Saving...");
+  try {
+    const saved = await apiPost("/workouts", {
+      exerciseId: document.getElementById("mm-exercise").value,
+      intensity: document.getElementById("mm-intensity").value,
+      durationMinutes: parseInt(document.getElementById("mm-duration").value || "0", 10),
+      date: document.getElementById("mm-date").value || null
+    });
+    closeModal("manual-modal");
+    toast("Workout saved: " + num(saved.caloriesBurned, 1) + " kcal burned", "success");
+    await reloadHistory();
+  } catch (err) {
+    showAlert("manual-alert", err.message, "error");
+  }
+  setBusy(btn, false);
+}
+
+function switchTab(name) {
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+  ["library", "favorites", "history"].forEach((t) => document.getElementById("tab-" + t).classList.toggle("hide", t !== name));
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  if (!getToken()) return;
+  document.getElementById("search-icon").innerHTML = icon("search");
+  document.getElementById("search-icon").className = "icon-wrap";
+  document.getElementById("search-icon").style.cssText = "position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--muted);display:flex";
+  document.getElementById("h-export").innerHTML = icon("download") + " Export CSV";
+  document.getElementById("sm-start").innerHTML = icon("play") + " Start session";
+  document.getElementById("t-finish").innerHTML = icon("check") + " Finish & save";
+
+  try {
+    const [exercises, favorites, history, profile] = await Promise.all([
+      loadCatalog("exercises"), apiGet("/favorites"), apiGet("/workouts"), apiGet("/profile")
+    ]);
+    if (!profile) {
+      window.location.href = "profile.html?welcome=1";
+      return;
+    }
+    state.exercises = exercises;
+    state.weight = profile.weightKg;
+    state.favorites = new Set(favorites.filter((f) => f.kind === "exercise").map((f) => f.itemId));
+    state.history = history;
+  } catch (err) {
+    toast(err.message, "error");
+    return;
+  }
+
+  document.getElementById("mm-exercise").innerHTML = state.exercises.map((e) => '<option value="' + e.id + '">' + e.icon + " " + esc(e.name) + "</option>").join("");
+  document.getElementById("mm-date").value = isoDate();
+  document.getElementById("mm-date").max = isoDate();
+  renderMuscles();
+  renderLibrary();
+  fillExerciseFilters();
+  renderHistory();
+
+  document.getElementById("tabs").addEventListener("click", (ev) => { if (ev.target.dataset.tab) switchTab(ev.target.dataset.tab); });
+  document.getElementById("muscles").addEventListener("click", (ev) => {
+    if (ev.target.dataset.muscle) { state.muscle = ev.target.dataset.muscle; renderMuscles(); renderLibrary(); }
+  });
+  document.getElementById("q").addEventListener("input", renderLibrary);
+  document.getElementById("difficulty").addEventListener("change", renderLibrary);
+
+  document.getElementById("content").addEventListener("click", async (ev) => {
+    const startBtn = ev.target.closest("[data-start]");
+    if (startBtn) { openStart(startBtn.dataset.start); return; }
+    const favBtn = ev.target.closest("[data-fav]");
+    if (favBtn) {
+      try {
+        const res = await apiPost("/favorites/exercise/" + favBtn.dataset.fav);
+        if (res.favorite) state.favorites.add(favBtn.dataset.fav); else state.favorites.delete(favBtn.dataset.fav);
+        renderLibrary();
+      } catch (err) { toast(err.message, "error"); }
+      return;
+    }
+    const delBtn = ev.target.closest("[data-del]");
+    if (delBtn && confirm("Remove this workout from your history?")) {
+      try {
+        await apiDelete("/workouts/" + delBtn.dataset.del);
+        toast("Workout removed", "success");
+        await reloadHistory();
+      } catch (err) { toast(err.message, "error"); }
+    }
+  });
+
+  ["sm-target", "sm-intensity"].forEach((id) => document.getElementById(id).addEventListener("input", updateStartEstimate));
+  document.getElementById("sm-cancel").addEventListener("click", () => closeModal("start-modal"));
+  document.getElementById("sm-start").addEventListener("click", beginSession);
+
+  document.getElementById("t-pause").addEventListener("click", () => {
+    if (timer.restUntil) return;
+    if (timer.running) { timer.elapsed = currentElapsed(); timer.running = false; }
+    else { timer.startedAt = Date.now(); timer.running = true; }
+    syncPauseButton();
+  });
+  document.getElementById("t-rest").addEventListener("click", () => {
+    if (timer.running) { timer.elapsed = currentElapsed(); timer.running = false; }
+    timer.restUntil = Date.now() + 30000;
+    syncPauseButton();
+  });
+  document.getElementById("t-finish").addEventListener("click", finishSession);
+  document.getElementById("t-cancel").addEventListener("click", () => {
+    if (confirm("Discard this session without saving?")) endSession();
+  });
+
+  document.getElementById("manual-open").addEventListener("click", () => { showAlert("manual-alert", ""); updateManualEstimate(); openModal("manual-modal"); });
+  document.getElementById("mm-cancel").addEventListener("click", () => closeModal("manual-modal"));
+  document.getElementById("mm-save").addEventListener("click", saveManual);
+  ["mm-exercise", "mm-duration", "mm-intensity"].forEach((id) => document.getElementById(id).addEventListener("input", updateManualEstimate));
+
+  ["h-range", "h-from", "h-to", "h-exercise", "h-sort"].forEach((id) => document.getElementById(id).addEventListener("change", () => {
+    const custom = document.getElementById("h-range").value === "custom";
+    document.getElementById("h-from").classList.toggle("hide", !custom);
+    document.getElementById("h-to").classList.toggle("hide", !custom);
+    renderHistory();
+  }));
+  document.getElementById("h-export").addEventListener("click", async () => {
+    try { await downloadCsv("workouts", "workouts.csv"); } catch (err) { toast(err.message, "error"); }
+  });
+
+  const startParam = new URLSearchParams(location.search).get("start");
+  if (startParam && state.exercises.some((e) => e.id === startParam)) openStart(startParam);
+
+
+  window.addEventListener("beforeunload", (ev) => {
+    if (document.getElementById("timer").classList.contains("open")) { ev.preventDefault(); ev.returnValue = ""; }
+  });
+});
+</script>
+</body>
+</html>
